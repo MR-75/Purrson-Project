@@ -1,3 +1,265 @@
+def acquire_food(food_options_file, ingredients_file):
+    def round_float(value):
+        return round(value, 4)
+
+    # Read ingredients data
+    ingredients_data = {}
+    with open(ingredients_file, 'r') as ingrfile:
+        lines = ingrfile.readlines()
+        delimiter = ';' if ';' in lines[0] else '/'  # Detect delimiter
+        for line in lines[1:]:  # Skip the header
+            parts = line.strip().split(delimiter)
+            if len(parts) == 6:
+                if delimiter == ';':  # Ingredients2
+                    ingredients_data[parts[5].strip()] = {
+                        'Calories': float(parts[1]),
+                        'Carbohydrates': float(parts[3]),
+                        'Sugars': float(parts[0]),
+                        'Protein': float(parts[4]),
+                        'Fat': float(parts[2])
+                    }
+                elif delimiter == '/':  # Ingredients1
+                    ingredients_data[parts[0].strip()] = {
+                        'Calories': float(parts[1]),
+                        'Carbohydrates': float(parts[2]),
+                        'Sugars': float(parts[3]),
+                        'Protein': float(parts[4]),
+                        'Fat': float(parts[5])
+                    }
+
+    # Read food options and calculate nutritional values
+    food_data = {}
+    with open(food_options_file, 'r') as foodfile:
+        lines = foodfile.readlines()
+        delimiter = '|' if '|' in lines[0] else '-'  # Detect delimiter
+        header = lines[0].strip().split(delimiter)  # Parse header to determine column indices
+
+        for line in lines[1:]:  # Skip the header
+            parts = line.strip().split(delimiter)
+            if len(parts) == len(header):
+                # Extract values using header indices
+                code = parts[header.index('Code')].strip()
+                food_name = parts[header.index('Food Name')].strip()
+                portion = int(parts[header.index('Portion (g)')].strip())
+                main_ingredients = parts[header.index('Main Ingredients (Top 3)')].strip().split(',')
+                food_type = parts[header.index('Type')].strip()
+
+                # Calculate nutritional values
+                percentages = [0.4, 0.25, 0.15]
+                totals = {'Calories': 0, 'Carbohydrates': 0, 'Sugars': 0, 'Protein': 0, 'Fat': 0}
+
+                for i in range(len(main_ingredients)):
+                    ingredient = main_ingredients[i].strip()
+                    if ingredient in ingredients_data:
+                        percentage = percentages[i]
+                        factor = portion * percentage / 100
+                        totals['Calories'] += ingredients_data[ingredient]['Calories'] * factor
+                        totals['Carbohydrates'] += ingredients_data[ingredient]['Carbohydrates'] * factor
+                        totals['Sugars'] += ingredients_data[ingredient]['Sugars'] * factor
+                        totals['Protein'] += ingredients_data[ingredient]['Protein'] * factor
+                        totals['Fat'] += ingredients_data[ingredient]['Fat'] * factor
+
+                food_data[code] = {
+                    'Food Name': food_name,
+                    'Type': food_type,
+                    'Portion': portion,
+                    'Calories': round_float(totals['Calories']),
+                    'Carbohydrates': round_float(totals['Carbohydrates']),
+                    'Sugars': round_float(totals['Sugars']),
+                    'Protein': round_float(totals['Protein']),
+                    'Fat': round_float(totals['Fat'])
+                }
+
+    return food_data
+class GameGrid:
+    """
+    A class representing a single cell/position in an NxN grid.
+    """
+
+    # Class Variables
+    INITIAL_VIBE = "neutral"
+    # Alphabetical order for the two food types found in Task 2
+    FOOD_TYPE_LIST = ["Decadent Dessert", "Healthy Treats"]  # "D" < "H" so this is alphabetical
+
+    def __init__(self, grid_position, grid_dict, food_dict):
+        """
+        Constructor for a single grid cell in an NxN game grid.
+
+        :param grid_position: (int) The integer position of this grid cell (1..N*N).
+        :param grid_dict: (dict) The game grid dictionary from Task 1 (keys: 1..N*N).
+        :param food_dict: (dict) The dictionary of foods from Task 2.
+        """
+
+        # 1) Set up instance variables
+        self.grid_position = grid_position           # the integer position of the grid
+        self.food_type     = "No Food Type"          # string representing the type of food
+        self.food_items    = []                      # list of food codes stored in this grid
+        self.vibe          = GameGrid.INITIAL_VIBE   # string representing the vibe of the grid
+
+        # Determine the dimension N of the grid (assume square)
+        # len(grid_dict) is the total number of positions, so N = sqrt(len(grid_dict))
+        total_positions = len(grid_dict)
+        # A simple approach if you know the grid is always square:
+        # e.g., for 9 positions => N=3, for 16 => N=4, etc.
+        # (No imports allowed, so let's do an integer approach)
+        N = 1
+        while N * N < total_positions:
+            N += 1
+
+        # Identify special positions (top-right, bottom-left, middle if N is odd).
+        top_right_pos   = N
+        bottom_left_pos = (N - 1) * N + 1
+        middle_pos      = (N * N + 1) // 2 if (N % 2 == 1) else None
+
+        # 2) Decide whether this position is a "skip" (i.e. no food)
+        #    or whether we assign Decadent Dessert / Healthy Treats
+        is_skip = (self.grid_position == top_right_pos) or \
+                  (self.grid_position == bottom_left_pos) or \
+                  (middle_pos is not None and self.grid_position == middle_pos)
+
+        # Only if not skip, decide which food type based on checkerboard pattern:
+        #   if (row+col) is even => "Decadent Dessert", else => "Healthy Treats"
+        if not is_skip:
+            # figure out row, col in 0-based indexing
+            row = (self.grid_position - 1) // N
+            col = (self.grid_position - 1) % N
+            if (row + col) % 2 == 0:
+                self.set_food_type("Decadent Dessert")
+            else:
+                self.set_food_type("Healthy Treats")
+
+            # 3) Generate a list of food items from the food_dict matching self.food_type
+            #    If "Decadent Dessert", gather all codes of that type
+            #    If "Healthy Treats", gather all codes of that type
+            #    If "No Food Type", skip
+            matched_codes = []
+            for code, info in food_dict.items():
+                if info["Type"] == self.get_food_type():
+                    matched_codes.append(code)
+            self.food_items = matched_codes
+
+        # 4) Add this GameGrid object into the grid dictionary under the key "grid object".
+        grid_dict[self.grid_position]["grid object"] = self
+
+    # ----------------------------------------------------------------
+    # Getter Methods
+    # ----------------------------------------------------------------
+    def get_grid_position(self):
+        return self.grid_position
+
+    def get_food_type(self):
+        return self.food_type
+
+    def get_food_items(self):
+        return self.food_items
+
+    def get_vibe(self):
+        return self.vibe
+
+    # ----------------------------------------------------------------
+    # Grid Update & Other Retrieval Methods
+    # ----------------------------------------------------------------
+    def set_food_type(self, new_food_type):
+        """
+        Updates the food type of the grid.
+        """
+        self.food_type = new_food_type
+
+    def add_food_item(self, food_item_code):
+        """
+        Add a single food code to this grid's food_items list.
+        """
+        self.food_items.append(food_item_code)
+
+    def remove_food_item(self, food_item_code):
+        """
+        Remove a single food code from this grid's food_items list if it exists.
+        """
+        if food_item_code in self.food_items:
+            self.food_items.remove(food_item_code)
+
+    def display_food_items(self, food_dict, pocket_space):
+        """
+        Prints no more than 5 food items in self.food_items whose 'Portion' <= pocket_space.
+        Format specification:
+         Position X: <FOOD TYPE> Grid [Y Food Items Available]
+         If no items fit => "No Food Items fit Pocket Space"
+         Otherwise => 
+           No. Food Name              Portion
+           [1] somefoodname           100 g
+           [2] ...
+           ...
+        The portion column must be right-aligned, with 1 space after the longest Food Name.
+        """
+
+        # Print the heading line
+        position_str  = f"Position {self.get_grid_position()}"
+        food_type_str = self.get_food_type()
+        items_count   = len(self.get_food_items())
+        print(f"{position_str}: {food_type_str} Grid [{items_count} Food Items Available]")
+
+        # Filter out items whose portion <= pocket_space
+        valid_items = []
+        for code in self.get_food_items():
+            portion = food_dict[code]["Portion"]
+            if portion <= pocket_space:
+                valid_items.append(code)
+
+        if len(valid_items) == 0:
+            print("No Food Items fit Pocket Space")
+            return
+
+        # Display up to 5 of those items
+        valid_items = valid_items[:5]
+
+        # Find the longest food name among these valid items
+        max_name_len = 0
+        for code in valid_items:
+            name_len = len(food_dict[code]["Food Name"])
+            if name_len > max_name_len:
+                max_name_len = name_len
+
+        # Print header line
+        # The "Portion" column should start 1 space after the longest Food Name
+        # We'll build the format string accordingly
+        print_str = "No. " + "Food Name".ljust(max_name_len) + " "
+        print_str += "Portion"
+        print(print_str)
+
+        # Print each item
+        count = 1
+        for code in valid_items:
+            food_name = food_dict[code]["Food Name"]
+            portion   = food_dict[code]["Portion"]
+            # Right-align the portion in a field, e.g. if portion is 3 digits, ensure it lines up
+            # We can simply use str.rjust(...) to line it up
+            # But we first figure out how many characters the portion column should have
+            # For a simpler approach, we can do something like 5 or 6 spaces, or just right-justify in 4
+            # We'll do a small calc: since "Portion" is 7 letters, let's ensure we have enough space
+            portion_str = str(portion) + " g"
+            # We'll place portion_str so it begins after the 1 space following the longest name
+            line = f"[{count}] " + food_name.ljust(max_name_len) + " " + portion_str.rjust(len("Portion"))
+            print(line)
+            count += 1
+
+    # ----------------------------------------------------------------
+    # String Representation
+    # ----------------------------------------------------------------
+    def __str__(self):
+        """
+        Return "Position <GRID POSITION>: <FOOD TYPE> Grid [<NUMBER> Food Items Available]"
+        """
+        pos_str       = self.get_grid_position()
+        food_type_str = self.get_food_type()
+        items_count   = len(self.get_food_items())
+        return f"Position {pos_str}: {food_type_str} Grid [{items_count} Food Items Available]"
+
+    def __repr__(self):
+        """
+        Usually return something unambiguous, but per instructions,
+        we can just return the same as __str__().
+        """
+        return self.__str__()
 class Purrson:
     INITIAL_POCKET_SPACE = 1500
     INITIAL_CALORIES = 5000
@@ -79,11 +341,11 @@ class Purrson:
         top_left = 1
         bottom_right = N * N
 
-        # 예외 처리: top_right or bottom_left
+       
         if current_pos == top_right or current_pos == bottom_left:
             return sorted([top_left, bottom_right])
 
-        # 기본 상하좌우 이동
+        
         next_positions = []
         row = (current_pos - 1) // N
         col = (current_pos - 1) % N
@@ -202,12 +464,14 @@ class Purrson:
 
 
 class PurrsperityGrid(GameGrid):
-
     def __init__(self, grid_position, grid_dict, food_dict):
+        # 부모 클래스(GameGrid) 생성자 호출
         super().__init__(grid_position, grid_dict, food_dict)
 
-        # Overwrite some of the default settings
+        # food_type을 "Special Food"로 덮어쓰기
         self.set_food_type("Special Food")
+
+        # 특별 아이템 5개를 self.food_items로 설정
         self.food_items = [
             "Double Pocket Space",
             "Replenish Calories",
@@ -215,6 +479,7 @@ class PurrsperityGrid(GameGrid):
             "Revert Opponent",
             "Double Last Food Item"
         ]
+
 
     def select_special_food_item(self, purrson, opponent):
        
@@ -368,9 +633,6 @@ if __name__ == "__main__":
         13: {}, 14: {}, 15: {},
         16: {}
     }
-
-    # Suppose you have Purrson class from Task 3 or Task 4:
-    # For demonstration, we'll define a minimal mock Purrson class here
     class Purrson:
         INITIAL_POCKET_SPACE = 1500
         INITIAL_CALORIES = 5000
@@ -421,7 +683,3 @@ if __name__ == "__main__":
                     self.pocket_content.pop()
                 if self.grid_positions:
                     self.grid_positions.pop()
-
-  
-
-
